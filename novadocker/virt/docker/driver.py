@@ -26,6 +26,7 @@ import uuid
 
 from docker import errors
 from docker import utils as docker_utils
+from os_brick.initiator import connector
 from oslo_config import cfg
 from oslo_log import log
 from oslo_serialization import jsonutils
@@ -58,6 +59,7 @@ from novadocker.virt import hostutils
 CONF = cfg.CONF
 CONF.import_opt('my_ip', 'nova.netconf')
 CONF.import_opt('instances_path', 'nova.compute.manager')
+CONF.import_opt('iscsi_use_multipath', 'nova.virt.libvirt.volume.iscsi', group='libvirt')
 
 docker_opts = [
     cfg.StrOpt('root_directory',
@@ -203,6 +205,30 @@ class DockerDriver(driver.ComputeDriver):
             else:
                 res.append(info['Config'].get('Hostname'))
         return res
+
+    def get_volume_connector(self, instance):
+        root_helper = utils.get_root_helper()
+        return connector.get_connector_properties(
+            root_helper, CONF.my_block_storage_ip,
+            CONF.libvirt.iscsi_use_multipath,
+            enforce_multipath=True,
+            host=CONF.host)
+
+    def attach_volume(self, context, connection_info, instance, mountpoint,
+                      disk_bus=None, device_type=None, encryption=None):
+        """Attach the disk to the instance at mountpoint using info."""
+        LOG.info('context = %s', str(context))
+        LOG.info('connection_info = %s', str(connection_info))
+        LOG.info('mountpoint = %s', str(mountpoint))
+        LOG.info('disk_bus = %s', str(disk_bus))
+        LOG.info('device_type = %s', str(device_type))
+        LOG.info('encryption = %s', str(encryption))
+        LOG.info('Exiting attach_volume() for %s', str(instance))
+
+    def detach_volume(self, connection_info, instance, mountpoint,
+                      encryption=None):
+        """Detach the disk attached to the instance."""
+        LOG.info('Exiting detach_volume() for %s', str(instance))
 
     def attach_interface(self, instance, image_meta, vif):
         """Attach an interface to the container."""
@@ -485,6 +511,18 @@ class DockerDriver(driver.ComputeDriver):
 
         if 'metadata' in instance:
             args['environment'] = nova_utils.instance_meta(instance)
+
+        if (image_meta and
+                image_meta.get('properties', {}).get('os_environment')):
+            try:
+                os_env = str(image_meta['properties'].get('os_environment'))
+                LOG.info('Parsing image os_environment {0}'.format(os_env))
+                for entry in os_env.split(','):
+                    ent_arr = entry.split('=')
+                    if len(ent_arr) == 2:
+                        args['environment'][ent_arr[0]] = ent_arr[1]
+            except Exception as e:
+                LOG.warning('Malformed environment: {0}'.format(e.message))
 
         container_id = self._create_container(instance, image_name, args)
         if not container_id:
